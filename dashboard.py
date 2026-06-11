@@ -568,7 +568,7 @@ def secao_visao_geral(df):
         fig_dia.update_traces(textposition="outside")
         # Força o Plotly a tratar o eixo X como data contínua
         fig_dia.update_xaxes(tickformat="%d/%m/%Y", dtick="86400000.0")
-        st.plotly_chart(fig_dia, use_container_width=True, key="vg_dia")
+        st.plotly_chart(fig_dia, width="stretch", key="vg_dia")
 
     st.markdown("---")
 
@@ -585,7 +585,7 @@ def secao_visao_geral(df):
                 hole=0.4
             )
             fig_desc.update_traces(textinfo="label+percent")
-            st.plotly_chart(fig_desc, use_container_width=True, key="vg_desconexao")
+            st.plotly_chart(fig_desc, width="stretch", key="vg_desconexao")
 
     # Atendimentos por agente
     with c2:
@@ -604,7 +604,7 @@ def secao_visao_geral(df):
             )
             fig_ag.update_traces(textposition="outside")
             fig_ag.update_layout(xaxis_tickangle=-30)
-            st.plotly_chart(fig_ag, use_container_width=True, key="vg_agente")
+            st.plotly_chart(fig_ag, width="stretch", key="vg_agente")
 
     st.markdown("---")
 
@@ -630,7 +630,7 @@ def secao_visao_geral(df):
             labels={"componente": "Componente", "media_s": "Segundos"}
         )
         fig_comp.update_traces(textposition="outside")
-        st.plotly_chart(fig_comp, use_container_width=True, key="vg_componentes")
+        st.plotly_chart(fig_comp, width="stretch", key="vg_componentes")
 
     st.markdown("---")
 
@@ -651,7 +651,7 @@ def secao_visao_geral(df):
         )
         fig_ass.update_traces(textposition="outside")
         fig_ass.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig_ass, use_container_width=True, key="vg_assunto")
+        st.plotly_chart(fig_ass, width="stretch", key="vg_assunto")
 
 
 # -------------------- Por Agente --------------------
@@ -688,7 +688,7 @@ def secao_por_agente(df):
         )
         fig.update_traces(textposition="outside")
         fig.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig, use_container_width=True, key="pa_atendimentos")
+        st.plotly_chart(fig, width="stretch", key="pa_atendimentos")
     with c2:
         fig2 = px.bar(
             df_ag, x="nome_agente", y="tma_s", text=df_ag["TMA"],
@@ -697,11 +697,11 @@ def secao_por_agente(df):
         )
         fig2.update_traces(textposition="outside")
         fig2.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig2, use_container_width=True, key="pa_tma")
+        st.plotly_chart(fig2, width="stretch", key="pa_tma")
 
     st.dataframe(
         df_ag[["nome_agente", "atendimentos", "TMA", "Tempo Total"]],
-        use_container_width=True
+        width="stretch"
     )
 
 
@@ -756,7 +756,7 @@ def secao_detalhe_agente(df):
             labels={"componente": "Componente", "media_s": "Segundos"}
         )
         fig.update_traces(textposition="outside")
-        st.plotly_chart(fig, use_container_width=True, key="da_componentes")
+        st.plotly_chart(fig, width="stretch", key="da_componentes")
 
     st.markdown("---")
 
@@ -773,11 +773,11 @@ def secao_detalhe_agente(df):
                 hole=0.4
             )
             fig_d.update_traces(textinfo="label+percent")
-            st.plotly_chart(fig_d, use_container_width=True, key="da_desconexao_pie")
+            st.plotly_chart(fig_d, width="stretch", key="da_desconexao_pie")
         with c2:
             st.dataframe(
                 df_desc.rename(columns={"tipo": "Tipo", "quantidade": "Qtd", "pct": "%"}),
-                use_container_width=True
+                width="stretch"
             )
 
     st.markdown("---")
@@ -798,7 +798,7 @@ def secao_detalhe_agente(df):
         )
         fig2.update_traces(textposition="outside")
         fig2.update_xaxes(tickformat="%d/%m/%Y", dtick="86400000.0")
-        st.plotly_chart(fig2, use_container_width=True, key="da_volume_diario")
+        st.plotly_chart(fig2, width="stretch", key="da_volume_diario")
 
 
 # -------------------- Por Assunto --------------------
@@ -835,7 +835,7 @@ def secao_por_assunto(df):
         )
         fig.update_traces(textposition="outside")
         fig.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig, use_container_width=True, key="ass_volume")
+        st.plotly_chart(fig, width="stretch", key="ass_volume")
     with c2:
         fig2 = px.bar(
             df_ass, x="assunto", y="tma_s", text=df_ass["TMA"],
@@ -844,11 +844,11 @@ def secao_por_assunto(df):
         )
         fig2.update_traces(textposition="outside")
         fig2.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig2, use_container_width=True, key="ass_tma")
+        st.plotly_chart(fig2, width="stretch", key="ass_tma")
 
     st.dataframe(
         df_ass[["assunto", "atendimentos", "TMA", "Tempo Total"]],
-        use_container_width=True
+        width="stretch"
     )
 
 
@@ -892,11 +892,11 @@ def secao_top_assuntos_tma(df):
     )
     fig.update_traces(textposition="outside")
     fig.update_layout(coloraxis_showscale=False, yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(fig, use_container_width=True, key="top_tma_bar")
+    st.plotly_chart(fig, width="stretch", key="top_tma_bar")
 
     st.dataframe(
         df_top[["assunto", "atendimentos", "TMA"]].reset_index(drop=True),
-        use_container_width=True
+        width="stretch"
     )
 
     if len(meses) > 1:
@@ -925,7 +925,7 @@ def secao_top_assuntos_tma(df):
         )
         fig2.update_traces(textposition="outside")
         fig2.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig2, use_container_width=True, key="top_tma_comp")
+        st.plotly_chart(fig2, width="stretch", key="top_tma_comp")
 
 
 # -------------------- Upload & main --------------------
@@ -967,9 +967,9 @@ def secao_upload():
                 st.info("Nenhum arquivo de histórico encontrado no GitHub.")
 
         # Botão para apagar TODOS os arquivos de histórico
-        if st.button("Apagar TODOS os arquivos de histórico do GitHub"):
-            confirm = st.checkbox("Confirmar exclusao de TODOS os arquivos de historico?")
-            if confirm:
+        confirm = st.checkbox("Confirmar exclusao de TODOS os arquivos de historico?")
+        if confirm:
+            if st.button("Apagar TODOS os arquivos de histórico do GitHub", type="primary"):
                 parquet_files = [f for f in list_files_in_github_repo() if f.startswith(HISTORICO_PREFIX) and f.endswith(HISTORICO_EXTENSION)]
                 if not parquet_files:
                     st.info("Nenhum arquivo de histórico para apagar.")
