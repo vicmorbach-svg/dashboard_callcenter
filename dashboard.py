@@ -285,7 +285,7 @@ def carregar_genesys(file_bytes: bytes, file_name: str):
         if "data_atendimento_raw" in df.columns:
             df["data_atendimento"] = pd.to_datetime(
                 df["data_atendimento_raw"].astype(str).str.strip(),
-                errors="coerce", dayfirst=True
+                errors="coerce", format="%d/%m/%Y %H:%M"
             )
         else:
             df["data_atendimento"] = pd.NaT
@@ -341,7 +341,7 @@ def carregar_zendesk(file_bytes: bytes, file_name: str):
         df = df.rename(columns={k: v for k, v in renomear.items() if k in df.columns})
 
         if "data_criacao_zen" in df.columns:
-            df["data_criacao_zen"] = pd.to_datetime(df["data_criacao_zen"], errors="coerce")
+            df["data_criacao_zen"] = pd.to_datetime(df["data_criacao_zen"].astype(str).str.strip(), format="%Y-%m-%d%H:%M:%S", errors="coerce")
 
         if "id_genesys" in df.columns:
             df["id_genesys_norm"] = df["id_genesys"].apply(normalizar_id)
@@ -549,22 +549,25 @@ def secao_visao_geral(df):
 
     st.markdown("---")
 
-    # Atendimentos por dia
-    if "data_atendimento" in df.columns and df["data_atendimento"].notna().any():
+        # Atendimentos por dia
+    if "data_base" in df.columns and df["data_base"].notna().any():
         df_dia = (
-            df.set_index("data_atendimento")
+            df.set_index("data_base")
             .resample("D")
             .size()
             .reset_index(name="atendimentos")
         )
-        df_dia["data_str"] = df_dia["data_atendimento"].dt.strftime("%d/%m/%Y")
+        # Remove dias sem atendimento para não criar buracos no gráfico
+        df_dia = df_dia[df_dia["atendimentos"] > 0]
+
         fig_dia = px.bar(
-            df_dia, x="data_str", y="atendimentos", text="atendimentos",
+            df_dia, x="data_base", y="atendimentos", text="atendimentos",
             title="Atendimentos por dia",
-            labels={"data_str": "Data", "atendimentos": "Atendimentos"}
+            labels={"data_base": "Data", "atendimentos": "Atendimentos"}
         )
         fig_dia.update_traces(textposition="outside")
-        fig_dia.update_layout(xaxis_tickangle=-30)
+        # Força o Plotly a tratar o eixo X como data contínua
+        fig_dia.update_xaxes(tickformat="%d/%m/%Y", dtick="86400000.0")
         st.plotly_chart(fig_dia, use_container_width=True, key="vg_dia")
 
     st.markdown("---")
