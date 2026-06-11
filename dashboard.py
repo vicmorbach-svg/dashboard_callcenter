@@ -993,19 +993,30 @@ def secao_upload():
 def get_users():
     users = {}
     try:
+        # Verifica se a seção [users] existe
+        if "users" not in st.secrets:
+            st.error("🚨 ERRO: A seção '[users]' não foi encontrada. Verifique a variável STREAMLIT_SECRETS no Railway.")
+            return users
+
         secrets  = st.secrets["users"]
         prefixes = set()
         for key in secrets:
             if key.endswith("_user"):
                 prefixes.add(key[:-5])
+
         for prefix in prefixes:
             username = secrets.get(f"{prefix}_user", "")
             password = secrets.get(f"{prefix}_password", "")
             role     = secrets.get(f"{prefix}_role", "user")
             if username:
                 users[username] = {"password": password, "role": role}
-    except Exception:
-        pass
+
+        if not users:
+            st.warning("🚨 A seção '[users]' existe, mas nenhum usuário foi carregado. O Railway pode ter desformatado o texto.")
+
+    except Exception as e:
+        st.error(f"🚨 Erro interno ao ler usuários: {e}")
+
     return users
 
 def login_screen():
