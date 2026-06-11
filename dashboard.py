@@ -515,20 +515,6 @@ def aplicar_filtros(df):
             fim = pd.Timestamp(periodo[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
             df_f = df_f[(df_f["data_base"] >= ini) & (df_f["data_base"] <= fim)]
 
-    if "tipo_desconexao" in df_f.columns:
-        tipos = sorted(df_f["tipo_desconexao"].dropna().unique().tolist())
-        if tipos:
-            sel_tipo = st.sidebar.multiselect("Tipo de desconexao", tipos, default=tipos, key="filtro_tipo")
-            if sel_tipo:
-                df_f = df_f[df_f["tipo_desconexao"].isin(sel_tipo)]
-
-    if "nome_agente" in df_f.columns:
-        agentes = sorted(df_f["nome_agente"].dropna().unique().tolist())
-        if agentes:
-            sel_ag = st.sidebar.multiselect("Agente", agentes, default=agentes, key="filtro_agente")
-            # Só aplica o filtro se o usuário desmarcou algum agente
-            if sel_ag and len(sel_ag) < len(agentes):
-                df_f = df_f[df_f["nome_agente"].isin(sel_ag)]
 
     return df_f
 
