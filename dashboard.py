@@ -988,13 +988,72 @@ def secao_upload():
                         st.error("Alguns arquivos de histórico não puderam ser apagados.")
 
 
+# -------------------- Autenticação --------------------
+
+def get_users():
+    users = {}
+    try:
+        secrets  = st.secrets["users"]
+        prefixes = set()
+        for key in secrets:
+            if key.endswith("_user"):
+                prefixes.add(key[:-5])
+        for prefix in prefixes:
+            username = secrets.get(f"{prefix}_user", "")
+            password = secrets.get(f"{prefix}_password", "")
+            role     = secrets.get(f"{prefix}_role", "user")
+            if username:
+                users[username] = {"password": password, "role": role}
+    except Exception:
+        pass
+    return users
+
+def login_screen():
+    st.title("🔐 Login")
+    st.markdown("Faça login para acessar o sistema.")
+    with st.form("login_form"):
+        username  = st.text_input("Usuário")
+        password  = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+    if submitted:
+        users = get_users()
+        if username in users and str(users[username]["password"]) == str(password):
+            st.session_state["logged_in"] = True
+            st.session_state["username"]  = username
+            st.session_state["role"]      = users[username]["role"]
+            st.rerun()
+        else:
+            st.error("Usuário ou senha incorretos.")
+
+def is_admin():
+    return st.session_state.get("role") == "admin"
+
+def logout():
+    st.session_state.clear()
+    st.rerun()
+
 def main():
+    # Trava o aplicativo na tela de login se não estiver autenticado
+    if not st.session_state.get("logged_in", False):
+        login_screen()
+        return
+
+    # Cabeçalho da barra lateral com botão de sair
+    st.sidebar.markdown(f"👤 Logado como: **{st.session_state.get('username', '')}** ({st.session_state.get('role', '').upper()})")
+    if st.sidebar.button("Sair / Logout"):
+        logout()
+    st.sidebar.markdown("---")
+
     st.title("Dashboard de Atendimentos - Call Center")
 
-    # Carrega o histórico completo (todos os arquivos) na inicialização
+    # Carrega o histórico completo na inicialização
     df_hist = carregar_historico()
 
-    secao_upload() # Chama a seção de upload após carregar o histórico
+    # Controle de Acesso: Apenas ADMIN vê a seção de upload e exclusão
+    if is_admin():
+        secao_upload()
+    else:
+        st.sidebar.info("Modo de visualização. Apenas administradores podem inserir ou apagar dados.")
 
     if df_hist.empty:
         st.info("Faça o upload do arquivo Genesys (XLSX) para começar, ou verifique se há arquivos de histórico no GitHub e as credenciais estão corretas.")
