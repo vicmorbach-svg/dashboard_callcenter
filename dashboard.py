@@ -1050,7 +1050,7 @@ def main():
         return
 
     # Cabeçalho da barra lateral com botão de sair
-    st.sidebar.markdown(f"👤 Logado como: **{st.session_state.get('username', '')}**")
+    st.sidebar.markdown(f"👤 Logado como: **{st.session_state.get('username')}**")
     if st.sidebar.button("Sair / Logout"):
         logout()
     st.sidebar.markdown("---")
