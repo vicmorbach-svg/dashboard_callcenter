@@ -1064,7 +1064,7 @@ def main():
     if is_admin():
         secao_upload()
     else:
-        st.sidebar.info("Modo de visualização. Apenas administradores podem inserir ou apagar dados.")
+        st.sidebar.info("Modo de visualização.")
 
     if df_hist.empty:
         st.info("Faça o upload do arquivo Genesys (XLSX) para começar, ou verifique se há arquivos de histórico no GitHub e as credenciais estão corretas.")
