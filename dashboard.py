@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import polars as pl
 import numpy as np
 import os
 import re
@@ -13,7 +13,7 @@ import requests
 import base64
 import json
 import io
-import datetime # Para gerar nomes de arquivos únicos
+import datetime
 
 # O prefixo para os arquivos de histórico dentro do repositório GitHub
 HISTORICO_PREFIX = "historico_atendimentos_"
@@ -24,7 +24,6 @@ st.set_page_config(page_title="Dashboard Call Center", layout="wide")
 # -------------------- Funções de Interação com a API do GitHub --------------------
 
 def get_github_config():
-    # 1. Tenta ler das variáveis de ambiente (Padrão no Railway)
     token = os.environ.get("GITHUB_TOKEN")
     repo = os.environ.get("GITHUB_REPO")
     branch = os.environ.get("GITHUB_BRANCH", "main")
@@ -32,7 +31,6 @@ def get_github_config():
     if token and repo:
         return token, repo, branch
 
-    # 2. Fallback para st.secrets (Para uso local na sua máquina)
     try:
         token  = st.secrets["github"]["token"]
         repo   = st.secrets["github"]["repo"]
@@ -64,10 +62,8 @@ def get_file_sha(path):
                 return data.get("sha")
         elif r.status_code == 404:
             return None
-        else:
-            st.error(f"Erro ao obter SHA do arquivo '{path}' do GitHub (Status: {r.status_code}): {r.text}")
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de conexão ao obter SHA do arquivo '{path}' do GitHub: {e}")
+        st.error(f"Erro de conexão ao obter SHA: {e}")
     return None
 
 def get_file_from_github(path):
@@ -81,10 +77,8 @@ def get_file_from_github(path):
             return r.content, get_file_sha(path)
         elif r.status_code == 404:
             return None, None
-        else:
-            st.error(f"Erro ao baixar arquivo '{path}' do GitHub (Status: {r.status_code}): {r.text}")
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de conexão ao baixar arquivo '{path}' do GitHub: {e}")
+        st.error(f"Erro de conexão ao baixar arquivo: {e}")
     return None, None
 
 def save_file_to_github(path, content_bytes, message):
@@ -104,12 +98,8 @@ def save_file_to_github(path, content_bytes, message):
         r = requests.put(url, headers=get_github_headers(), data=json.dumps(payload))
         if r.status_code in [200, 201]:
             return True
-        else:
-            st.error(f"Erro ao salvar arquivo '{path}' no GitHub (Status: {r.status_code}): {r.text}")
-            if r.status_code == 422 and "too large" in r.text:
-                st.error("O arquivo é muito grande para ser salvo diretamente no GitHub via API. Considere usar armazenamento em nuvem para arquivos maiores.")
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de conexão ao salvar arquivo '{path}' no GitHub: {e}")
+        st.error(f"Erro de conexão ao salvar arquivo: {e}")
     return False
 
 def delete_file_from_github(path, message):
@@ -125,10 +115,8 @@ def delete_file_from_github(path, message):
         r = requests.delete(url, headers=get_github_headers(), data=json.dumps(payload))
         if r.status_code == 200:
             return True
-        else:
-            st.error(f"Erro ao excluir arquivo '{path}' do GitHub (Status: {r.status_code}): {r.text}")
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de conexão ao excluir arquivo '{path}' do GitHub: {e}")
+        st.error(f"Erro de conexão ao excluir arquivo: {e}")
     return False
 
 def list_files_in_github_repo(path=""):
@@ -140,35 +128,33 @@ def list_files_in_github_repo(path=""):
         r = requests.get(url, headers=get_github_headers())
         if r.status_code == 200:
             return [item["path"] for item in r.json() if item["type"] == "file"]
-        elif r.status_code == 404: # Diretório vazio ou não existe
+        elif r.status_code == 404:
             return []
-        else:
-            st.error(f"Erro ao listar arquivos no GitHub (Status: {r.status_code}): {r.text}")
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro de conexão ao listar arquivos no GitHub: {e}")
+        st.error(f"Erro de conexão ao listar arquivos: {e}")
     return []
 
-def df_to_parquet_bytes(df):
+def df_to_parquet_bytes(df: pl.DataFrame):
     buf = io.BytesIO()
-    df.to_parquet(buf, index=False, engine='pyarrow')
+    df.write_parquet(buf)
     buf.seek(0)
     return buf.getvalue()
 
-def parquet_bytes_to_df(content_bytes, colunas=None):
+def parquet_bytes_to_df(content_bytes):
     if not content_bytes:
-        return pd.DataFrame()
+        return pl.DataFrame()
     try:
         buf = io.BytesIO(content_bytes)
         buf.seek(0)
-        return pd.read_parquet(buf, engine='pyarrow', columns=colunas)
+        return pl.read_parquet(buf)
     except Exception as e:
         st.error(f"Erro ao converter bytes Parquet para DataFrame: {e}")
-        return pd.DataFrame()
+        return pl.DataFrame()
 
 # -------------------- Utils --------------------
 
 def formatar_tempo(segundos):
-    if pd.isna(segundos) or segundos is None:
+    if segundos is None or np.isnan(segundos):
         return "-"
     segundos = int(segundos)
     h = segundos // 3600
@@ -179,33 +165,31 @@ def formatar_tempo(segundos):
     return f"{m:02d}:{s:02d}"
 
 def duracao_para_segundos(valor):
-    if pd.isna(valor):
-        return np.nan
+    if valor is None:
+        return None
     s = str(valor).strip()
     if not s or s.lower() == "nan":
-        return np.nan
+        return None
     s = s.split(".")[0]
     partes = s.split(":")
     try:
         if len(partes) == 3:
-            return int(partes[0]) * 3600 + int(partes[1]) * 60 + int(partes[2])
+            return float(int(partes[0]) * 3600 + int(partes[1]) * 60 + int(partes[2]))
         elif len(partes) == 2:
-            return int(partes[0]) * 60 + int(partes[1])
+            return float(int(partes[0]) * 60 + int(partes[1]))
         else:
             return float(s)
     except Exception:
-        return np.nan
+        return None
 
 def normalizar_id(valor):
-    if pd.isna(valor):
-        return np.nan
+    if valor is None:
+        return None
     s = str(valor).strip().lower()
     if not s or s == "nan":
-        return np.nan
-    match = re.search(
-        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', s
-    )
-    return match.group(0) if match else np.nan
+        return None
+    match = re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', s)
+    return match.group(0) if match else None
 
 def normalizar_col(nome):
     try:
@@ -215,8 +199,8 @@ def normalizar_col(nome):
     nome = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode("ascii")
     return nome.strip().lower()
 
-def _col_tma(df):
-    return "conversas_segundos" if "conversas_segundos" in df.columns else "duracao_segundos"
+def _col_tma(df_cols):
+    return "conversas_segundos" if "conversas_segundos" in df_cols else "duracao_segundos"
 
 # -------------------- Mapa Genesys --------------------
 
@@ -250,7 +234,7 @@ def detectar_coluna_agente(colunas):
 @st.cache_data(show_spinner="Carregando Genesys...", max_entries=3)
 def carregar_genesys(file_bytes: bytes, file_name: str):
     try:
-        df_raw = pd.read_excel(BytesIO(file_bytes), engine="openpyxl", dtype=str)
+        df_raw = pl.read_excel(file_bytes, engine="calamine")
 
         renomear = {}
         for col in df_raw.columns:
@@ -261,34 +245,27 @@ def carregar_genesys(file_bytes: bytes, file_name: str):
         col_agente = detectar_coluna_agente(df_raw.columns)
         if col_agente:
             renomear[col_agente] = "nome_agente"
-        else:
-            st.warning(f"Coluna de agente nao encontrada. Colunas: {list(df_raw.columns)}")
 
-        df = df_raw.rename(columns=renomear)
+        df = df_raw.rename({k: v for k, v in renomear.items() if k in df_raw.columns})
         del df_raw
         gc.collect()
 
         if "exportacao" in df.columns:
-            mask = df["exportacao"].astype(str).str.strip().str.lower().isin(["sim", "yes"])
-            df = df[mask].reset_index(drop=True)
+            df = df.filter(pl.col("exportacao").cast(pl.Utf8).str.to_lowercase().str.strip_chars().is_in(["sim", "yes"]))
 
         if "filtros" in df.columns:
-            df["fila"] = (
-                df["filtros"].astype(str)
-                .str.extract(r"Fila:\s*(.+)", expand=False)
-                .str.strip()
+            df = df.with_columns(
+                pl.col("filtros").cast(pl.Utf8).str.extract(r"Fila:\s*(.+)", 1).str.strip_chars().fill_null("URA_CORSAN").alias("fila")
             )
-        if "fila" not in df.columns:
-            df["fila"] = "URA_CORSAN"
-        df["fila"] = df["fila"].fillna("URA_CORSAN")
+        elif "fila" not in df.columns:
+            df = df.with_columns(pl.lit("URA_CORSAN").alias("fila"))
 
         if "data_atendimento_raw" in df.columns:
-            df["data_atendimento"] = pd.to_datetime(
-                df["data_atendimento_raw"].astype(str).str.strip(),
-                format="%d/%m/%Y %H:%M", errors="coerce"
+            df = df.with_columns(
+                pl.col("data_atendimento_raw").cast(pl.Utf8).str.strip_chars().str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False).alias("data_atendimento")
             )
         else:
-            df["data_atendimento"] = pd.NaT
+            df = df.with_columns(pl.lit(None).cast(pl.Datetime).alias("data_atendimento"))
 
         cols_tempo = {
             "duracao_str":          "duracao_segundos",
@@ -299,35 +276,46 @@ def carregar_genesys(file_bytes: bytes, file_name: str):
             "tratamento_total_str": "tratamento_segundos",
             "tempo_abandono_str":   "abandono_segundos",
         }
+
         for col_str, col_seg in cols_tempo.items():
             if col_str in df.columns:
-                df[col_seg] = df[col_str].apply(duracao_para_segundos)
+                df = df.with_columns(
+                    pl.col(col_str).map_elements(duracao_para_segundos, return_dtype=pl.Float64).alias(col_seg)
+                )
 
         if "id_genesys" in df.columns:
-            df["id_genesys_norm"] = df["id_genesys"].apply(normalizar_id)
+            df = df.with_columns(
+                pl.col("id_genesys").map_elements(normalizar_id, return_dtype=pl.Utf8).alias("id_genesys_norm")
+            )
         else:
-            df["id_genesys_norm"] = np.nan
+            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("id_genesys_norm"))
 
         if "ani" in df.columns:
-            df["ani"] = df["ani"].astype(str).str.replace(r"^tel:\+", "", regex=True).str.strip()
+            df = df.with_columns(
+                pl.col("ani").cast(pl.Utf8).str.replace(r"^tel:\+", "").str.strip_chars()
+            )
 
         if "nome_agente" in df.columns:
-            df["nome_agente"] = df["nome_agente"].astype(str).str.strip()
-            df.loc[df["nome_agente"].str.lower().isin(["nan", "", "none"]), "nome_agente"] = np.nan
+            df = df.with_columns(
+                pl.when(pl.col("nome_agente").cast(pl.Utf8).str.to_lowercase().str.strip_chars().is_in(["nan", "", "none"]))
+                .then(None)
+                .otherwise(pl.col("nome_agente").cast(pl.Utf8).str.strip_chars())
+                .alias("nome_agente")
+            )
 
-        st.info(f"Genesys: {len(df)} interacoes carregadas.")
+        st.info(f"Genesys: {df.height} interacoes carregadas.")
         return df
 
     except Exception as e:
         st.error(f"Erro ao carregar Genesys: {e}")
-        return pd.DataFrame()
+        return pl.DataFrame()
 
 
 @st.cache_data(show_spinner="Carregando Zendesk...", max_entries=3)
 def carregar_zendesk(file_bytes: bytes, file_name: str):
     try:
-        df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl", dtype=str)
-        df.columns = df.columns.str.strip()
+        df = pl.read_excel(file_bytes, engine="calamine")
+        df = df.rename({col: col.strip() for col in df.columns})
 
         renomear = {
             "ID do ticket":                              "ticket_id",
@@ -338,72 +326,82 @@ def carregar_zendesk(file_bytes: bytes, file_name: str):
             "Matricula":                                 "matricula",
             "Tickets":                                   "tickets_zen",
         }
-        df = df.rename(columns={k: v for k, v in renomear.items() if k in df.columns})
+        df = df.rename({k: v for k, v in renomear.items() if k in df.columns})
 
         if "data_criacao_zen" in df.columns:
-            df["data_criacao_zen"] = pd.to_datetime(df["data_criacao_zen"].astype(str).str.strip(), format="%Y-%m-%dT%H:%M:%S", errors="coerce")
+            df = df.with_columns(
+                pl.col("data_criacao_zen").cast(pl.Utf8).str.strip_chars().str.strptime(pl.Datetime, "%Y-%m-%dT%H:%M:%S", strict=False)
+            )
 
         if "id_genesys" in df.columns:
-            df["id_genesys_norm"] = df["id_genesys"].apply(normalizar_id)
+            df = df.with_columns(
+                pl.col("id_genesys").map_elements(normalizar_id, return_dtype=pl.Utf8).alias("id_genesys_norm")
+            )
 
-        total = len(df)
-        com_id = df["id_genesys_norm"].notna().sum() if "id_genesys_norm" in df.columns else 0
+        total = df.height
+        com_id = df.filter(pl.col("id_genesys_norm").is_not_null()).height if "id_genesys_norm" in df.columns else 0
         st.info(f"Zendesk: {total} tickets, {com_id} com ID Genesys.")
         return df
 
     except Exception as e:
         st.error(f"Erro ao carregar Zendesk: {e}")
-        return pd.DataFrame()
+        return pl.DataFrame()
 
 
 # -------------------- Integracao --------------------
 
-def integrar_dados(df_zen, df_gen):
-    if df_gen.empty:
+def integrar_dados(df_zen: pl.DataFrame, df_gen: pl.DataFrame):
+    if df_gen.is_empty():
         st.error("Arquivo Genesys vazio apos processamento.")
-        return pd.DataFrame()
+        return pl.DataFrame()
 
-    df = df_gen.copy()
+    df = df_gen.clone()
 
     if (
-        not df_zen.empty
+        not df_zen.is_empty()
         and "id_genesys_norm" in df_zen.columns
         and "id_genesys_norm" in df.columns
-        and df["id_genesys_norm"].notna().any()
+        and df.filter(pl.col("id_genesys_norm").is_not_null()).height > 0
     ):
         colunas_zen = ["id_genesys_norm"]
         for col in ["ticket_id", "assunto", "matricula", "data_criacao_zen", "tickets_zen"]:
             if col in df_zen.columns:
                 colunas_zen.append(col)
 
-        df_zen_slim = df_zen[colunas_zen].drop_duplicates(subset=["id_genesys_norm"])
-        df = pd.merge(df, df_zen_slim, on="id_genesys_norm", how="left", suffixes=("", "_zen"))
+        df_zen_slim = df_zen.select(colunas_zen).unique(subset=["id_genesys_norm"])
+        df = df.join(df_zen_slim, on="id_genesys_norm", how="left")
 
-        total = len(df)
-        com_assunto = df["assunto"].notna().sum() if "assunto" in df.columns else 0
+        total = df.height
+        com_assunto = df.filter(pl.col("assunto").is_not_null()).height if "assunto" in df.columns else 0
         st.success(
             f"Merge concluido: {total} registros | "
             f"{com_assunto} cruzados com Zendesk ({com_assunto/total*100:.1f}%)"
         )
     else:
-        if df_zen.empty:
+        if df_zen.is_empty():
             st.warning("Zendesk nao carregado; exibindo so dados do Genesys.")
         else:
             st.warning("ID de conversa nao disponivel para cruzamento.")
-        df["ticket_id"] = np.nan
-        df["assunto"]   = np.nan
-        df["matricula"] = np.nan
+        df = df.with_columns([
+            pl.lit(None).cast(pl.Utf8).alias("ticket_id"),
+            pl.lit(None).cast(pl.Utf8).alias("assunto"),
+            pl.lit(None).cast(pl.Utf8).alias("matricula")
+        ])
 
-    df["data_base"] = df["data_atendimento"].copy()
+    df = df.with_columns(pl.col("data_atendimento").alias("data_base"))
 
-    if "data_criacao_zen" in df.columns and df["data_criacao_zen"].notna().any():
-        mask = df["data_base"].isna() & df["data_criacao_zen"].notna()
-        df.loc[mask, "data_base"] = df.loc[mask, "data_criacao_zen"]
+    if "data_criacao_zen" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("data_base").is_null() & pl.col("data_criacao_zen").is_not_null())
+            .then(pl.col("data_criacao_zen"))
+            .otherwise(pl.col("data_base"))
+            .alias("data_base")
+        )
 
-    if "data_base" in df.columns and df["data_base"].notna().any():
-        df["mes"] = df["data_base"].dt.to_period("M").astype(str)
+    if "data_base" in df.columns:
+        df = df.with_columns(pl.col("data_base").dt.strftime("%Y-%m").alias("mes"))
     else:
-        df["mes"] = np.nan
+        df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("mes"))
 
     return df
 
@@ -412,54 +410,36 @@ def integrar_dados(df_zen, df_gen):
 
 @st.cache_data(show_spinner="Carregando historico...", ttl=60)
 def carregar_historico():
-    """
-    Carrega todos os arquivos de histórico Parquet do GitHub e os concatena.
-    """
     all_files = list_files_in_github_repo()
     parquet_files = [f for f in all_files if f.startswith(HISTORICO_PREFIX) and f.endswith(HISTORICO_EXTENSION)]
 
     if not parquet_files:
-        return pd.DataFrame()
+        return pl.DataFrame()
 
     dfs = []
     for file_path in parquet_files:
         content_bytes, _ = get_file_from_github(file_path)
         if content_bytes:
             df_part = parquet_bytes_to_df(content_bytes)
-            if not df_part.empty:
+            if not df_part.is_empty():
                 dfs.append(df_part)
-        # Não há st.warning aqui, pois você pediu para remover as informações
-        # sobre o carregamento de arquivos individuais.
 
     if not dfs:
-        return pd.DataFrame()
+        return pl.DataFrame()
 
-    df_final = pd.concat(dfs, ignore_index=True)
+    df_final = pl.concat(dfs, how="vertical_relaxed")
 
-    # Converter colunas de data/hora após a concatenação
-    for col in ["data_base", "data_atendimento", "data_criacao_zen"]:
-        if col in df_final.columns:
-            df_final[col] = pd.to_datetime(df_final[col], errors="coerce")
-
-    # Remover duplicatas após carregar todos os arquivos
-    if "id_genesys_norm" in df_final.columns and df_final["id_genesys_norm"].notna().any():
-        # Prioriza a última ocorrência de um id_genesys_norm, assumindo que é a mais atual
-        df_final = df_final.drop_duplicates(subset=["id_genesys_norm"], keep="last")
+    if "id_genesys_norm" in df_final.columns and df_final.filter(pl.col("id_genesys_norm").is_not_null()).height > 0:
+        df_final = df_final.unique(subset=["id_genesys_norm"], keep="last")
     else:
-        # Fallback para chaves de duplicidade se id_genesys_norm não estiver disponível
         chaves = [c for c in ["nome_agente", "data_atendimento", "duracao_segundos"] if c in df_final.columns]
         if chaves:
-            df_final = df_final.drop_duplicates(subset=chaves, keep="last")
+            df_final = df_final.unique(subset=chaves, keep="last")
 
-    return df_final.reset_index(drop=True)
+    return df_final
 
-
-
-def salvar_novo_historico_parcial(df_novo_lote):
-    """
-    Salva um novo lote de dados como um arquivo Parquet separado no GitHub.
-    """
-    if df_novo_lote.empty:
+def salvar_novo_historico_parcial(df_novo_lote: pl.DataFrame):
+    if df_novo_lote.is_empty():
         st.warning("Nenhum dado para salvar no novo arquivo de histórico.")
         return False
 
@@ -470,39 +450,20 @@ def salvar_novo_historico_parcial(df_novo_lote):
     content_bytes = df_to_parquet_bytes(df_novo_lote)
 
     if save_file_to_github(new_file_name, content_bytes, f"Adiciona novo lote de dados ({timestamp})"):
-        carregar_historico.clear() # Limpa o cache para recarregar todos os arquivos
+        carregar_historico.clear()
         return True
     return False
 
-def adicionar_ao_historico(df_novo, df_hist):
-    # Esta função agora apenas combina os dados em memória para a análise atual
-    # A persistência de df_novo será feita separadamente por salvar_novo_historico_parcial
-    if df_hist.empty:
-        return df_novo.reset_index(drop=True)
-
-    df_comb = pd.concat([df_hist, df_novo], ignore_index=True)
-
-    if "id_genesys_norm" in df_comb.columns and df_comb["id_genesys_norm"].notna().any():
-        # Remove duplicatas baseadas em id_genesys_norm, mantendo a última ocorrência
-        df_comb = df_comb.drop_duplicates(subset=["id_genesys_norm"], keep="last")
-    else:
-        # Fallback para remover duplicatas se id_genesys_norm não estiver disponível
-        chaves = [c for c in ["nome_agente", "data_atendimento", "duracao_segundos"] if c in df_comb.columns]
-        if chaves:
-            df_comb = df_comb.drop_duplicates(subset=chaves, keep="last")
-
-    return df_comb.reset_index(drop=True)
-
-
 # -------------------- Filtros --------------------
 
-def aplicar_filtros(df):
+def aplicar_filtros(df: pl.DataFrame):
     st.sidebar.header("Filtros")
-    df_f = df.copy()
+    df_f = df.clone()
 
-    if "data_base" in df_f.columns and df_f["data_base"].notna().any():
-        min_data = df_f["data_base"].min().date()
-        max_data = df_f["data_base"].max().date()
+    if "data_base" in df_f.columns and df_f.filter(pl.col("data_base").is_not_null()).height > 0:
+        min_data = df_f.select(pl.col("data_base").min()).item().date()
+        max_data = df_f.select(pl.col("data_base").max()).item().date()
+
         periodo = st.sidebar.date_input(
             "Periodo",
             value=(min_data, max_data),
@@ -511,29 +472,28 @@ def aplicar_filtros(df):
             key="filtro_periodo"
         )
         if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
-            ini = pd.Timestamp(periodo[0])
-            fim = pd.Timestamp(periodo[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-            df_f = df_f[(df_f["data_base"] >= ini) & (df_f["data_base"] <= fim)]
-
+            ini = periodo[0]
+            fim = periodo[1]
+            df_f = df_f.filter((pl.col("data_base").dt.date() >= ini) & (pl.col("data_base").dt.date() <= fim))
 
     return df_f
 
 
 # -------------------- Visao Geral --------------------
 
-def secao_visao_geral(df):
+def secao_visao_geral(df: pl.DataFrame):
     st.subheader("Visao geral")
 
-    col_tma = _col_tma(df)
+    col_tma = _col_tma(df.columns)
 
-    total       = len(df)
-    tma_medio   = df[col_tma].mean() if col_tma in df.columns else np.nan
-    dur_total   = df["duracao_segundos"].sum() if "duracao_segundos" in df.columns else 0
-    ura_medio   = df["ura_segundos"].mean() if "ura_segundos" in df.columns else np.nan
-    fila_medio  = df["fila_segundos"].mean() if "fila_segundos" in df.columns else np.nan
-    tpc_medio   = df["tpc_segundos"].mean() if "tpc_segundos" in df.columns else np.nan
-    trat_medio  = df["tratamento_segundos"].mean() if "tratamento_segundos" in df.columns else np.nan
-    aband_medio = df["abandono_segundos"].mean() if "abandono_segundos" in df.columns else np.nan
+    total       = df.height
+    tma_medio   = df.select(pl.col(col_tma).mean()).item() if col_tma in df.columns else np.nan
+    dur_total   = df.select(pl.col("duracao_segundos").sum()).item() if "duracao_segundos" in df.columns else 0
+    ura_medio   = df.select(pl.col("ura_segundos").mean()).item() if "ura_segundos" in df.columns else np.nan
+    fila_medio  = df.select(pl.col("fila_segundos").mean()).item() if "fila_segundos" in df.columns else np.nan
+    tpc_medio   = df.select(pl.col("tpc_segundos").mean()).item() if "tpc_segundos" in df.columns else np.nan
+    trat_medio  = df.select(pl.col("tratamento_segundos").mean()).item() if "tratamento_segundos" in df.columns else np.nan
+    aband_medio = df.select(pl.col("abandono_segundos").mean()).item() if "abandono_segundos" in df.columns else np.nan
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total de atendimentos", total)
@@ -549,16 +509,14 @@ def secao_visao_geral(df):
 
     st.markdown("---")
 
-        # Atendimentos por dia
-    if "data_base" in df.columns and df["data_base"].notna().any():
+    if "data_base" in df.columns and df.filter(pl.col("data_base").is_not_null()).height > 0:
         df_dia = (
-            df.set_index("data_base")
-            .resample("D")
-            .size()
-            .reset_index(name="atendimentos")
-        )
-        # Remove dias sem atendimento para não criar buracos no gráfico
-        df_dia = df_dia[df_dia["atendimentos"] > 0]
+            df.filter(pl.col("data_base").is_not_null())
+            .group_by(pl.col("data_base").dt.truncate("1d"))
+            .len()
+            .rename({"len": "atendimentos"})
+            .sort("data_base")
+        ).to_pandas()
 
         fig_dia = px.bar(
             df_dia, x="data_base", y="atendimentos", text="atendimentos",
@@ -566,37 +524,38 @@ def secao_visao_geral(df):
             labels={"data_base": "Data", "atendimentos": "Atendimentos"}
         )
         fig_dia.update_traces(textposition="outside")
-        # Força o Plotly a tratar o eixo X como data contínua
         fig_dia.update_xaxes(tickformat="%d/%m/%Y", dtick="86400000.0")
         st.plotly_chart(fig_dia, width="stretch", key="vg_dia")
 
     st.markdown("---")
-
     c1, c2 = st.columns(2)
 
-    # Pizza tipo de desconexao
     with c1:
-        if "tipo_desconexao" in df.columns and df["tipo_desconexao"].notna().any():
-            df_desc = df["tipo_desconexao"].dropna().value_counts().reset_index()
-            df_desc.columns = ["tipo", "quantidade"]
+        if "tipo_desconexao" in df.columns and df.filter(pl.col("tipo_desconexao").is_not_null()).height > 0:
+            df_desc = (
+                df.drop_nulls("tipo_desconexao")
+                .group_by("tipo_desconexao")
+                .len()
+                .rename({"tipo_desconexao": "tipo", "len": "quantidade"})
+            ).to_pandas()
+
             fig_desc = px.pie(
                 df_desc, names="tipo", values="quantidade",
-                title="Tipos de desconexao",
-                hole=0.4
+                title="Tipos de desconexao", hole=0.4
             )
             fig_desc.update_traces(textinfo="label+percent")
             st.plotly_chart(fig_desc, width="stretch", key="vg_desconexao")
 
-    # Atendimentos por agente
     with c2:
-        if "nome_agente" in df.columns and df["nome_agente"].notna().any():
+        if "nome_agente" in df.columns and df.filter(pl.col("nome_agente").is_not_null()).height > 0:
             df_ag = (
-                df[df["nome_agente"].notna()]
-                .groupby("nome_agente")
-                .size()
-                .reset_index(name="atendimentos")
-                .sort_values("atendimentos", ascending=False)
-            )
+                df.drop_nulls("nome_agente")
+                .group_by("nome_agente")
+                .len()
+                .rename({"len": "atendimentos"})
+                .sort("atendimentos", descending=True)
+            ).to_pandas()
+
             fig_ag = px.bar(
                 df_ag, x="nome_agente", y="atendimentos", text="atendimentos",
                 title="Atendimentos por agente",
@@ -608,7 +567,6 @@ def secao_visao_geral(df):
 
     st.markdown("---")
 
-    # Componentes de tempo medio geral
     componentes = {
         "URA":          "ura_segundos",
         "Fila":         "fila_segundos",
@@ -617,11 +575,12 @@ def secao_visao_geral(df):
         "Tratamento":   "tratamento_segundos",
     }
     dados_comp = [
-        {"componente": k, "media_s": df[v].mean()}
+        {"componente": k, "media_s": df.select(pl.col(v).mean()).item()}
         for k, v in componentes.items()
-        if v in df.columns and df[v].notna().any()
+        if v in df.columns and df.filter(pl.col(v).is_not_null()).height > 0
     ]
     if dados_comp:
+        import pandas as pd
         df_comp = pd.DataFrame(dados_comp)
         df_comp["Tempo medio"] = df_comp["media_s"].apply(formatar_tempo)
         fig_comp = px.bar(
@@ -634,16 +593,16 @@ def secao_visao_geral(df):
 
     st.markdown("---")
 
-    # Atendimentos por assunto (se houver Zendesk)
-    if "assunto" in df.columns and df["assunto"].notna().any():
+    if "assunto" in df.columns and df.filter(pl.col("assunto").is_not_null()).height > 0:
         df_ass = (
-            df[df["assunto"].notna()]
-            .groupby("assunto")
-            .size()
-            .reset_index(name="atendimentos")
-            .sort_values("atendimentos", ascending=False)
+            df.drop_nulls("assunto")
+            .group_by("assunto")
+            .len()
+            .rename({"len": "atendimentos"})
+            .sort("atendimentos", descending=True)
             .head(15)
-        )
+        ).to_pandas()
+
         fig_ass = px.bar(
             df_ass, x="assunto", y="atendimentos", text="atendimentos",
             title="Top 15 assuntos (volume)",
@@ -656,26 +615,26 @@ def secao_visao_geral(df):
 
 # -------------------- Por Agente --------------------
 
-def secao_por_agente(df):
+def secao_por_agente(df: pl.DataFrame):
     st.subheader("Atendimentos por agente")
 
-    if "nome_agente" not in df.columns or df["nome_agente"].isna().all():
+    if "nome_agente" not in df.columns or df.filter(pl.col("nome_agente").is_not_null()).height == 0:
         st.info("Sem dados de agente.")
         return
 
-    col_tma = _col_tma(df)
+    col_tma = _col_tma(df.columns)
 
     df_ag = (
-        df[df["nome_agente"].notna()]
-        .groupby("nome_agente")
-        .agg(
-            atendimentos=("nome_agente", "count"),
-            tma_s=(col_tma, "mean"),
-            tempo_total_s=("duracao_segundos", "sum"),
-        )
-        .reset_index()
-        .sort_values("atendimentos", ascending=False)
-    )
+        df.drop_nulls("nome_agente")
+        .group_by("nome_agente")
+        .agg([
+            pl.len().alias("atendimentos"),
+            pl.col(col_tma).mean().alias("tma_s"),
+            pl.col("duracao_segundos").sum().alias("tempo_total_s")
+        ])
+        .sort("atendimentos", descending=True)
+    ).to_pandas()
+
     df_ag["TMA"]         = df_ag["tma_s"].apply(formatar_tempo)
     df_ag["Tempo Total"] = df_ag["tempo_total_s"].apply(formatar_tempo)
 
@@ -707,26 +666,26 @@ def secao_por_agente(df):
 
 # -------------------- Detalhe Agente --------------------
 
-def secao_detalhe_agente(df):
+def secao_detalhe_agente(df: pl.DataFrame):
     st.subheader("Detalhe por agente")
 
-    if "nome_agente" not in df.columns or df["nome_agente"].isna().all():
+    if "nome_agente" not in df.columns or df.filter(pl.col("nome_agente").is_not_null()).height == 0:
         st.info("Sem dados de agente.")
         return
 
-    agentes = sorted(df["nome_agente"].dropna().unique().tolist())
+    agentes = sorted(df.drop_nulls("nome_agente").select("nome_agente").unique().to_series().to_list())
     agente_sel = st.selectbox("Selecione o agente", agentes, key="sel_agente_detalhe")
 
-    df_ag = df[df["nome_agente"] == agente_sel].copy()
-    if df_ag.empty:
+    df_ag = df.filter(pl.col("nome_agente") == agente_sel)
+    if df_ag.is_empty():
         st.info("Sem dados para este agente.")
         return
 
-    col_tma = _col_tma(df_ag)
+    col_tma = _col_tma(df_ag.columns)
 
-    total     = len(df_ag)
-    tma_med   = df_ag[col_tma].mean() if col_tma in df_ag.columns else np.nan
-    dur_total = df_ag["duracao_segundos"].sum() if "duracao_segundos" in df_ag.columns else 0
+    total     = df_ag.height
+    tma_med   = df_ag.select(pl.col(col_tma).mean()).item() if col_tma in df_ag.columns else np.nan
+    dur_total = df_ag.select(pl.col("duracao_segundos").sum()).item() if "duracao_segundos" in df_ag.columns else 0
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Atendimentos", total)
@@ -743,11 +702,12 @@ def secao_detalhe_agente(df):
         "Tratamento": "tratamento_segundos",
     }
     dados_comp = [
-        {"componente": k, "media_s": df_ag[v].mean()}
+        {"componente": k, "media_s": df_ag.select(pl.col(v).mean()).item()}
         for k, v in componentes.items()
-        if v in df_ag.columns and df_ag[v].notna().any()
+        if v in df_ag.columns and df_ag.filter(pl.col(v).is_not_null()).height > 0
     ]
     if dados_comp:
+        import pandas as pd
         df_comp = pd.DataFrame(dados_comp)
         df_comp["Tempo medio"] = df_comp["media_s"].apply(formatar_tempo)
         fig = px.bar(
@@ -760,17 +720,21 @@ def secao_detalhe_agente(df):
 
     st.markdown("---")
 
-    if "tipo_desconexao" in df_ag.columns and df_ag["tipo_desconexao"].notna().any():
-        df_desc = df_ag["tipo_desconexao"].dropna().value_counts().reset_index()
-        df_desc.columns = ["tipo", "quantidade"]
+    if "tipo_desconexao" in df_ag.columns and df_ag.filter(pl.col("tipo_desconexao").is_not_null()).height > 0:
+        df_desc = (
+            df_ag.drop_nulls("tipo_desconexao")
+            .group_by("tipo_desconexao")
+            .len()
+            .rename({"tipo_desconexao": "tipo", "len": "quantidade"})
+        ).to_pandas()
+
         df_desc["pct"] = (df_desc["quantidade"] / df_desc["quantidade"].sum() * 100).round(1)
 
         c1, c2 = st.columns(2)
         with c1:
             fig_d = px.pie(
                 df_desc, names="tipo", values="quantidade",
-                title="Tipos de desconexao",
-                hole=0.4
+                title="Tipos de desconexao", hole=0.4
             )
             fig_d.update_traces(textinfo="label+percent")
             st.plotly_chart(fig_d, width="stretch", key="da_desconexao_pie")
@@ -782,14 +746,14 @@ def secao_detalhe_agente(df):
 
     st.markdown("---")
 
-    if "data_base" in df_ag.columns and df_ag["data_base"].notna().any():
+    if "data_base" in df_ag.columns and df_ag.filter(pl.col("data_base").is_not_null()).height > 0:
         df_dia = (
-            df_ag.set_index("data_base")
-            .resample("D")
-            .size()
-            .reset_index(name="atendimentos")
-        )
-        df_dia = df_dia[df_dia["atendimentos"] > 0]
+            df_ag.filter(pl.col("data_base").is_not_null())
+            .group_by(pl.col("data_base").dt.truncate("1d"))
+            .len()
+            .rename({"len": "atendimentos"})
+            .sort("data_base")
+        ).to_pandas()
 
         fig2 = px.bar(
             df_dia, x="data_base", y="atendimentos", text="atendimentos",
@@ -803,26 +767,26 @@ def secao_detalhe_agente(df):
 
 # -------------------- Por Assunto --------------------
 
-def secao_por_assunto(df):
+def secao_por_assunto(df: pl.DataFrame):
     st.subheader("Atendimentos por assunto")
 
-    if "assunto" not in df.columns or df["assunto"].isna().all():
+    if "assunto" not in df.columns or df.filter(pl.col("assunto").is_not_null()).height == 0:
         st.info("Ainda nao ha assuntos cruzados com o Zendesk.")
         return
 
-    col_tma = _col_tma(df)
+    col_tma = _col_tma(df.columns)
 
     df_ass = (
-        df[df["assunto"].notna()]
-        .groupby("assunto")
-        .agg(
-            atendimentos=(col_tma, "count"),
-            tma_s=(col_tma, "mean"),
-            tempo_total_s=("duracao_segundos", "sum"),
-        )
-        .reset_index()
-        .sort_values("atendimentos", ascending=False)
-    )
+        df.drop_nulls("assunto")
+        .group_by("assunto")
+        .agg([
+            pl.len().alias("atendimentos"),
+            pl.col(col_tma).mean().alias("tma_s"),
+            pl.col("duracao_segundos").sum().alias("tempo_total_s")
+        ])
+        .sort("atendimentos", descending=True)
+    ).to_pandas()
+
     df_ass["TMA"]         = df_ass["tma_s"].apply(formatar_tempo)
     df_ass["Tempo Total"] = df_ass["tempo_total_s"].apply(formatar_tempo)
 
@@ -854,33 +818,36 @@ def secao_por_assunto(df):
 
 # -------------------- Top TMA por mes --------------------
 
-def secao_top_assuntos_tma(df):
+def secao_top_assuntos_tma(df: pl.DataFrame):
     st.subheader("Top 10 assuntos por TMA - por mes")
 
-    if "assunto" not in df.columns or df["assunto"].isna().all():
+    if "assunto" not in df.columns or df.filter(pl.col("assunto").is_not_null()).height == 0:
         st.info("Ainda nao ha assuntos cruzados com o Zendesk.")
         return
 
-    if "mes" not in df.columns or df["mes"].isna().all():
+    if "mes" not in df.columns or df.filter(pl.col("mes").is_not_null()).height == 0:
         st.info("Coluna de mes nao disponivel.")
         return
 
-    col_tma = _col_tma(df)
-    meses   = sorted(df["mes"].dropna().astype(str).unique().tolist())
+    col_tma = _col_tma(df.columns)
+    meses   = sorted(df.drop_nulls("mes").select("mes").unique().to_series().to_list())
     mes_sel = st.selectbox("Selecione o mes", meses, key="sel_mes_top_tma")
 
-    df_mes = df[(df["mes"].astype(str) == mes_sel) & df["assunto"].notna()].copy()
-    if df_mes.empty:
+    df_mes = df.filter((pl.col("mes") == mes_sel) & pl.col("assunto").is_not_null())
+    if df_mes.is_empty():
         st.info("Sem dados para este mes.")
         return
 
     df_top = (
-        df_mes.groupby("assunto")
-        .agg(atendimentos=(col_tma, "count"), tma_s=(col_tma, "mean"))
-        .reset_index()
-        .sort_values("tma_s", ascending=False)
+        df_mes.group_by("assunto")
+        .agg([
+            pl.len().alias("atendimentos"),
+            pl.col(col_tma).mean().alias("tma_s")
+        ])
+        .sort("tma_s", descending=True)
         .head(10)
-    )
+    ).to_pandas()
+
     df_top["TMA"] = df_top["tma_s"].apply(formatar_tempo)
 
     fig = px.bar(
@@ -901,24 +868,27 @@ def secao_top_assuntos_tma(df):
 
     if len(meses) > 1:
         st.markdown("**Comparativo entre meses**")
-        df_todos = (
-            df[df["assunto"].notna()]
-            .groupby(["mes", "assunto"])
-            .agg(tma_s=(col_tma, "mean"))
-            .reset_index()
-        )
+        df_comp = (
+            df.drop_nulls("assunto")
+            .group_by(["mes", "assunto"])
+            .agg(pl.col(col_tma).mean().alias("tma_s"))
+        ).to_pandas()
+
         tops = []
         for m in meses:
             bloco = (
-                df_todos[df_todos["mes"].astype(str) == m]
+                df_comp[df_comp["mes"] == m]
                 .sort_values("tma_s", ascending=False)
                 .head(10)
             )
             tops.append(bloco)
-        df_comp = pd.concat(tops, ignore_index=True)
-        df_comp["TMA"] = df_comp["tma_s"].apply(formatar_tempo)
+
+        import pandas as pd
+        df_comp_final = pd.concat(tops, ignore_index=True)
+        df_comp_final["TMA"] = df_comp_final["tma_s"].apply(formatar_tempo)
+
         fig2 = px.bar(
-            df_comp, x="assunto", y="tma_s", color="mes",
+            df_comp_final, x="assunto", y="tma_s", color="mes",
             barmode="group", text="TMA",
             title="TMA por assunto - comparativo entre meses",
             labels={"tma_s": "TMA (s)", "assunto": "Assunto", "mes": "Mes"}
@@ -938,17 +908,16 @@ def secao_upload():
 
     if arq_gen is not None:
         if st.sidebar.button("Processar e acumular"):
-            df_zen = carregar_zendesk(arq_zen.read(), arq_zen.name) if arq_zen else pd.DataFrame()
+            df_zen = carregar_zendesk(arq_zen.read(), arq_zen.name) if arq_zen else pl.DataFrame()
             df_gen = carregar_genesys(arq_gen.read(), arq_gen.name)
             df_novo = integrar_dados(df_zen, df_gen)
 
-            if df_novo.empty:
+            if df_novo.is_empty():
                 st.sidebar.error("Nenhum dado gerado.")
                 return
 
-            # Salva o novo lote de dados como um arquivo separado no GitHub
             if salvar_novo_historico_parcial(df_novo):
-                st.sidebar.success(f"Novo lote de dados salvo no GitHub. Total de {len(df_novo)} registros.")
+                st.sidebar.success(f"Novo lote de dados salvo no GitHub. Total de {df_novo.height} registros.")
                 st.rerun()
             else:
                 st.sidebar.error("Falha ao salvar o novo lote de dados no GitHub.")
@@ -956,7 +925,6 @@ def secao_upload():
     with st.sidebar.expander("Gerenciar historico"):
         st.warning("Esta seção interage diretamente com o repositório GitHub.")
 
-        # Botão para listar arquivos
         if st.button("Listar arquivos de histórico"):
             parquet_files = [f for f in list_files_in_github_repo() if f.startswith(HISTORICO_PREFIX) and f.endswith(HISTORICO_EXTENSION)]
             if parquet_files:
@@ -966,7 +934,6 @@ def secao_upload():
             else:
                 st.info("Nenhum arquivo de histórico encontrado no GitHub.")
 
-        # Botão para apagar TODOS os arquivos de histórico
         confirm = st.checkbox("Confirmar exclusao de TODOS os arquivos de historico?")
         if confirm:
             if st.button("Apagar TODOS os arquivos de histórico do GitHub", type="primary"):
@@ -995,7 +962,7 @@ def get_users():
     try:
         # Verifica se a seção [users] existe
         if "users" not in st.secrets:
-            st.error("🚨 ERRO: A seção '[users]' não foi encontrada. Verifique a variável STREAMLIT_SECRETS no Railway.")
+            st.error("🚨 ERRO: A seção '[users]' não foi encontrada. Verifique a variável STREAMLIT_SECRETS.")
             return users
 
         secrets  = st.secrets["users"]
@@ -1012,7 +979,7 @@ def get_users():
                 users[username] = {"password": password, "role": role}
 
         if not users:
-            st.warning("🚨 A seção '[users]' existe, mas nenhum usuário foi carregado. O Railway pode ter desformatado o texto.")
+            st.warning("🚨 A seção '[users]' existe, mas nenhum usuário foi carregado.")
 
     except Exception as e:
         st.error(f"🚨 Erro interno ao ler usuários: {e}")
@@ -1066,12 +1033,14 @@ def main():
     else:
         st.sidebar.info("Modo de visualização.")
 
-    if df_hist.empty:
+    # Verifica se o DataFrame do Polars está vazio usando .is_empty()
+    if df_hist.is_empty():
         st.info("Faça o upload do arquivo Genesys (XLSX) para começar, ou verifique se há arquivos de histórico no GitHub e as credenciais estão corretas.")
         return
 
     df_filtrado = aplicar_filtros(df_hist)
-    if df_filtrado.empty:
+
+    if df_filtrado.is_empty():
         st.warning("Nenhum registro para os filtros atuais.")
         return
 
@@ -1091,3 +1060,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
