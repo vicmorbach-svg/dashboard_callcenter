@@ -5,3 +5,5 @@ plotly
 requests
 pyarrow
 openpyxl
+polars
+fastexcel
