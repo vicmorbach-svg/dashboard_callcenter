@@ -427,7 +427,12 @@ def carregar_historico():
     if not dfs:
         return pl.DataFrame()
 
-    df_final = pl.concat(dfs, how="vertical_relaxed")
+    try:
+        df_final = pl.concat(dfs, how="diagonal_relaxed")
+    except Exception as e:
+        st.error(f"Erro ao juntar os arquivos de histórico: {e}")
+        # Fallback de segurança caso o diagonal_relaxed falhe por versão do Polars
+        df_final = pl.concat(dfs, how="diagonal")
 
     if "id_genesys_norm" in df_final.columns and df_final.filter(pl.col("id_genesys_norm").is_not_null()).height > 0:
         df_final = df_final.unique(subset=["id_genesys_norm"], keep="last")
